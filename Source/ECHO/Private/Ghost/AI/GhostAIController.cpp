@@ -1,7 +1,7 @@
 //GhostAIController.cpp
 
 #include "Ghost/AI/GhostAIController.h"
-#include "Enemy/KariEnemy/KariEnemyChar.h"
+#include "Enemy/EnemyChara.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -38,12 +38,19 @@ void AGhostAIController::Tick(float DeltaTime)
             OwnerPawn->GetActorLocation(),
             NearestEnemy->GetActorLocation()
         );
-        BB->SetValueAsBool(FName("IsInAttackRange"), Distance <= AttackRange);
+        bool bInRange = Distance <= AttackRange;
+        BB->SetValueAsBool(FName("IsInAttackRange"), bInRange);
+
+        GEngine->AddOnScreenDebugMessage(-1, 0.1f, FColor::White,
+            FString::Printf(TEXT("距離: %.1f 攻撃範囲: %.1f InRange: %s"),
+                Distance, AttackRange, bInRange ? TEXT("TRUE") : TEXT("FALSE")));
     }
     else
     {
         BB->SetValueAsBool(FName("IsInAttackRange"), false);
     }
+
+
 }
 
 AActor* AGhostAIController::FindNearestEnemy() const
@@ -54,7 +61,7 @@ AActor* AGhostAIController::FindNearestEnemy() const
     TArray<AActor*> Enemies;
     UGameplayStatics::GetAllActorsOfClass(
         GetWorld(),
-        AEnemyChar::StaticClass(),
+        AEnemyChara::StaticClass(),
         Enemies
     );
 

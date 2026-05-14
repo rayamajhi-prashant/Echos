@@ -59,6 +59,10 @@ AActionCharacter::AActionCharacter(const FObjectInitializer& ObjectInitializer)
 	CameraBoom->TargetArmLength = 400.0f;
 	// 壁の衝突テスト
 	CameraBoom->bDoCollisionTest = true;
+	//カメラが反応するチャンネルををWorldStaticのみにする
+	CameraBoom->ProbeChannel = ECC_GameTraceChannel1;
+	//判定用の球の大きさを少し小さくしてがたつきを抑える
+	CameraBoom->ProbeSize = 10.f;
 	// 右肩越しオフセット
 	CameraBoom->SocketOffset = FVector(0.0f, 60.0f, 50.0f);
 	// カメラスムージング

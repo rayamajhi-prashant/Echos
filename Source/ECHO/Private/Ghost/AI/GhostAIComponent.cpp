@@ -45,6 +45,9 @@ void UGhostAIComponent::SetupByRole(EGhostRole Role)
 	AGhostAIController* AIC = Cast<AGhostAIController>(
 		Cast<APawn>(GetOwner())->GetController());
 
+	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow,
+		AIC ? TEXT("SetupByRole: AIC取得成功") : TEXT("SetupByRole: AIC取得失敗"));
+
 	if (!AIC)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("GhostAIComponent: AIControllerが見つかりません"));

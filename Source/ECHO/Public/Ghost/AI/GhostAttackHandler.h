@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Ghost/AI/GhostActionHandlerBase.h"
+#include "Engine/EngineTypes.h"
 #include "GhostAttackHandler.generated.h"
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
@@ -23,4 +24,17 @@ public:
     //BPで指定するモンタージュ
     UPROPERTY(EditAnywhere, Category = "Ghost")
     UAnimMontage* AttackMontage;
+
+private:
+    // ヒット判定の範囲
+    UPROPERTY(EditAnywhere, Category = "Ghost")
+    float AttackRadius = 60.f;
+
+    // ヒット判定の距離
+    UPROPERTY(EditAnywhere, Category = "Ghost")
+    float AttackRange = 100.f;
+
+    // ダメージ量
+    UPROPERTY(EditAnywhere, Category = "Ghost")
+    float AttackDamage = 10.f;
 };

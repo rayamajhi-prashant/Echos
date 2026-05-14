@@ -2,7 +2,7 @@
 //コンバットコンポーネントソース
 
 #include "Player/CombatComponent.h"
-#include "Enemy/KariEnemy/KariEnemyChar.h"
+#include "Enemy/EnemyChara.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -74,10 +74,10 @@ void UCombatComponent::CheckHit()
 		);
 
 		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
-			FString::Printf(TEXT("EnemyキャストできたかL %s"), Cast<AEnemyChar>(HitActor) ? TEXT("OK") : TEXT("NO")));
+			FString::Printf(TEXT("EnemyキャストできたかL %s"), Cast<AEnemyChara>(HitActor) ? TEXT("OK") : TEXT("NO")));
 
 		//エネルギー加算を通知
-		if (Cast<AEnemyChar>(HitActor))
+		if (Cast<AEnemyChara>(HitActor))
 		{
 			OnHitEnemy.Broadcast(EnergyGainPerHit);
 		}
