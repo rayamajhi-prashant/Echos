@@ -65,26 +65,28 @@ EBTNodeResult::Type UBTTask_GhostAttack::ExecuteTask(
     Data.Rotation = GhostCharacter->GetActorRotation();
     Data.AnimationTag = FName("Attack");
 
-    AttackHandler->Execute(Data, GhostCharacter);
+    return EBTNodeResult::Succeeded;
 
-    //クールダウン分だけ待機してからSuccess
-    FTimerHandle& TimerHandle = *reinterpret_cast<FTimerHandle*>(NodeMemory);
-    UBehaviorTreeComponent* BTComp = &OwnerComp;
+    //AttackHandler->Execute(Data, GhostCharacter);
 
-    AIC->GetWorld()->GetTimerManager().SetTimer(
-        TimerHandle,
-        FTimerDelegate::CreateWeakLambda(this, [this, BTComp]()
-            {
-                if (BTComp)
-                {
-                    FinishLatentTask(*BTComp, EBTNodeResult::Succeeded);
-                }
-            }),
-        AttackCooldown,
-        false
-    );
+    ////クールダウン分だけ待機してからSuccess
+    //FTimerHandle& TimerHandle = *reinterpret_cast<FTimerHandle*>(NodeMemory);
+    //UBehaviorTreeComponent* BTComp = &OwnerComp;
 
-    GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Blue,TEXT("F"));
+    //AIC->GetWorld()->GetTimerManager().SetTimer(
+    //    TimerHandle,
+    //    FTimerDelegate::CreateWeakLambda(this, [this, BTComp]()
+    //        {
+    //            if (BTComp)
+    //            {
+    //                FinishLatentTask(*BTComp, EBTNodeResult::Succeeded);
+    //            }
+    //        }),
+    //    AttackCooldown,
+    //    false
+    //);
 
-    return EBTNodeResult::InProgress;
+    //GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Blue,TEXT("F"));
+
+    //return EBTNodeResult::InProgress;
 }
