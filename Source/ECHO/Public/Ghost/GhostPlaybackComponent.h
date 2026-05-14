@@ -48,7 +48,7 @@ private:
 	void ExecuteCurrentAction();
 
 	//各アクションの実行
-	void PlayMove(const FGhostActionData& Data);
+/*	void PlayMove(const FGhostActionData& Data);
 	void PlayAttack(const FGhostActionData& Data);
-	void PlayDodge(const FGhostActionData& Data);		
+	void PlayDodge(const FGhostActionData& Data);	*/	
 };

@@ -18,8 +18,12 @@ AActionCharacter::AActionCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UActionMovementComponent>(ACharacter::CharacterMovementComponentName)),
 	TimeToSprint(1.5f),
 	CurrentRunTime(0.f),
-	GhostSummonCost(10.f),
-	CurrentEnergy(100.f)
+	GhostSummonCost(30.f),
+	MaxEnergy(100.f),
+	EnergyGainPerHit(15.f),
+	CurrentEnergy(0.f),
+	ActiveGhostCount(0),
+	MaxGhostCount(5)
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -83,6 +87,19 @@ UActionMovementComponent* AActionCharacter::GetActionMovementComponent() const
 void AActionCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	//エネルギー0スタート
+	CurrentEnergy = 0.f;
+
+	//CombatComponentのヒットデリゲートを取得
+	if (CombatComponent)
+	{
+		CombatComponent->OnHitEnemy.AddUObject(
+			this,
+			&AActionCharacter::OnHitEnemy
+		);
+	}
+
 
 	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow,
 	//	FString::Printf(TEXT("BeginPlay GhostRecorderアドレス: %p"), GhostRecorder));
@@ -160,6 +177,16 @@ void AActionCharacter::Attack()
 	CombatComponent->ExecuteAttack();
 
 }
+
+
+void AActionCharacter::OnHitEnemy(float EnergyGain)
+{
+	CurrentEnergy = FMath::Clamp(CurrentEnergy + EnergyGain, 0.f, MaxEnergy);
+
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Cyan,
+		FString::Printf(TEXT("Energy: %.1f / %.1f"), CurrentEnergy, MaxEnergy));
+}
+
 
 void AActionCharacter::Move(const FInputActionValue& Value)
 {
@@ -264,26 +291,18 @@ void AActionCharacter::Dodge()
 //残像召喚
 void AActionCharacter::SummonGhost()
 {
-	//GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("A"));
-
 	//エネルギーチェック
 	if (CurrentEnergy < GhostSummonCost) return;
-
-	//GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("B"));
 
 	//レコーダーからデータ取得
 	if (!GhostRecorder) return;
 	TArray<FGhostActionData> Actions = GhostRecorder->GetRecordedActions();
 
-	//GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("C"));
-
 	//データが空なら召喚しない
 	if (Actions.IsEmpty()) return;
 
-	//GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("D"));
-
 	//プレイヤーの後ろにSpawn
-	FVector SpawnLocation = GetActorLocation() - GetActorForwardVector() * 100.f;
+	FVector SpawnLocation = GetActorLocation() + GetActorRightVector() * 100.f;
 	FRotator SpawnRotation = GetActorRotation();
 
 	FActorSpawnParameters Params;
@@ -300,5 +319,6 @@ void AActionCharacter::SummonGhost()
 	{
 		Ghost->InitGhost(Actions);
 		CurrentEnergy -= GhostSummonCost;
+		ActiveGhostCount++;
 	}
 }

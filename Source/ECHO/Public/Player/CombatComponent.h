@@ -72,4 +72,37 @@ protected:
 	float CachedGravityScale;		//重力
 	float CachedGroundFriction;		//摩擦
 
+
+
+	//------仮攻撃判定等------
+public:
+	//AnimNotifyから呼ぶヒット判定関数
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void CheckHit();
+
+	//エネルギー加算のデリゲート
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnHitEnemy, float);
+	FOnHitEnemy OnHitEnemy;
+
+private:
+	//1回の攻撃で複数回ヒットしないようにするフラグ
+	TArray<AActor*> HitActorsThisAttack;
+
+	//ヒット判定の範囲
+	UPROPERTY(EditAnywhere, Category = "Combat")
+	float AttackRadius = 80.f;
+
+	//ヒット判定の距離
+	UPROPERTY(EditAnywhere, Category = "Combat")
+	float AttackRange = 120.f;
+
+	//1ヒットあたりのダメージ
+	UPROPERTY(EditAnywhere, Category = "Combat")
+	float AttackDamage = 20.f;
+
+	//1ヒットあたりのエネルギー増加量
+	UPROPERTY(EditAnywhere, Category = "Combat")
+	float EnergyGainPerHit = 15.f;
+
+
 };

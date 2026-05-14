@@ -2,6 +2,8 @@
 //コンバットコンポーネントソース
 
 #include "Player/CombatComponent.h"
+#include "Enemy/KariEnemy/KariEnemyChar.h"
+#include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
@@ -19,6 +21,69 @@ UCombatComponent::UCombatComponent() :
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
+void UCombatComponent::CheckHit()
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter) return;
+
+	//キャラクターの前方にSphereTrace
+	FVector Start = OwnerCharacter->GetActorLocation();
+	FVector End = Start + OwnerCharacter->GetActorForwardVector() * AttackRange;
+
+	TArray<FHitResult> HitResults;
+	FCollisionShape Sphere = FCollisionShape::MakeSphere(AttackRadius);
+
+	DrawDebugSphere(GetWorld(), Start, AttackRadius, 12, FColor::Yellow, false, 1.f);
+	DrawDebugSphere(GetWorld(), End, AttackRadius, 12, FColor::Red, false, 1.f);
+	DrawDebugLine(GetWorld(), Start, End, FColor::Green, false, 1.f);
+
+	bool bHit = GetWorld()->SweepMultiByChannel(
+		HitResults,
+		Start,
+		End,
+		FQuat::Identity,
+		ECC_Pawn,
+		Sphere
+	);
+
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+		FString::Printf(TEXT("CheckHit呼ばれた: ヒット数=%d"), HitResults.Num()));
+
+	if (!bHit) return;
+
+	for (const FHitResult& Hit : HitResults)
+	{
+		AActor* HitActor = Hit.GetActor();
+
+		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
+			FString::Printf(TEXT("ヒットしたActor: %s"), *GetNameSafe(HitActor)));
+
+		if (!HitActor || HitActor == OwnerCharacter) continue;
+
+		//同じ攻撃で2回当たらないようにする
+		if (HitActorsThisAttack.Contains(HitActor)) continue;
+		HitActorsThisAttack.Add(HitActor);
+
+		//ダメージを与える
+		UGameplayStatics::ApplyDamage(
+			HitActor,
+			AttackDamage,
+			OwnerCharacter->GetController(),
+			OwnerCharacter,
+			UDamageType::StaticClass()
+		);
+
+		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
+			FString::Printf(TEXT("EnemyキャストできたかL %s"), Cast<AEnemyChar>(HitActor) ? TEXT("OK") : TEXT("NO")));
+
+		//エネルギー加算を通知
+		if (Cast<AEnemyChar>(HitActor))
+		{
+			OnHitEnemy.Broadcast(EnergyGainPerHit);
+		}
+	}
+}
+
 void UCombatComponent::ExecuteAttack()
 {
 	//既に攻撃中なら何もしない
@@ -27,7 +92,7 @@ void UCombatComponent::ExecuteAttack()
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter) return;
 
-	//Engine->AddOnScreenDebugMessage(-1, 3.f, FColor::Yellow, TEXT("ExecuteAttack: Broadcast送信"));
+	HitActorsThisAttack.Empty();
 
 	FGhostActionData Data;
 	Data.Type	   = EGhostActionType::Attack;

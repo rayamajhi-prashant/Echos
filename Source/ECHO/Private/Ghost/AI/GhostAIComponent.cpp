@@ -5,6 +5,7 @@
 #include "Ghost/GhostCharacter.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
+#include "Ghost/AI/GhostAIController.h"
 
 #include "DrawDebugHelpers.h"//画面デバッグ用
 //GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("A"));
@@ -41,7 +42,7 @@ EGhostRole UGhostAIComponent::AnalyzeRole(const TArray<FGhostActionData>& Action
 
 void UGhostAIComponent::SetupByRole(EGhostRole Role)
 {
-	AAIController* AIC = Cast<AAIController>(
+	AGhostAIController* AIC = Cast<AGhostAIController>(
 		Cast<APawn>(GetOwner())->GetController());
 
 	if (!AIC)
