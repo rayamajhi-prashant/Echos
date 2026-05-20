@@ -66,4 +66,27 @@ EBTNodeResult::Type UBTTask_GhostAttack::ExecuteTask(
     Data.AnimationTag = FName("Attack");
 
     return EBTNodeResult::Succeeded;
+
+    //AttackHandler->Execute(Data, GhostCharacter);
+
+    ////クールダウン分だけ待機してからSuccess
+    //FTimerHandle& TimerHandle = *reinterpret_cast<FTimerHandle*>(NodeMemory);
+    //UBehaviorTreeComponent* BTComp = &OwnerComp;
+
+    //AIC->GetWorld()->GetTimerManager().SetTimer(
+    //    TimerHandle,
+    //    FTimerDelegate::CreateWeakLambda(this, [this, BTComp]()
+    //        {
+    //            if (BTComp)
+    //            {
+    //                FinishLatentTask(*BTComp, EBTNodeResult::Succeeded);
+    //            }
+    //        }),
+    //    AttackCooldown,
+    //    false
+    //);
+
+    //GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Blue,TEXT("F"));
+
+    //return EBTNodeResult::InProgress;
 }
