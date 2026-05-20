@@ -2,6 +2,7 @@
 //コンバットコンポーネントソース
 
 #include "Player/CombatComponent.h"
+#include "Player/ActionMovementComponent.h"
 #include "Enemy/EnemyChara.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
@@ -11,30 +12,190 @@
 //GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("A"));
 
 UCombatComponent::UCombatComponent() :
-	bIsAttaking(false),
-	DodgeForce(6000.f),
-	bHasAirDodged(false),
+	DodgeForce(5000.f),
 	DodgeDuration(0.1f),
 	DodgeCooldown(0.5f),
-	bCanDodge(true)
+	bIsAttacking(false),
+	bComboWindowOpen(false),
+	bComboInputBuffered(false),
+	bCanDodge(true),
+	bHasAirDodged(false),
+	CachedGravityScale(1.f),
+	CachedGroundFriction(8.f),
+	EnergyGainPerHit(15.f)
 {
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
-void UCombatComponent::CheckHit()
+void UCombatComponent::ExecuteAttack()
 {
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::White,
+		FString::Printf(TEXT("ExecuteAttack: bIsAttacking=%s, bComboWindowOpen=%s, ComboIndex=%d"),
+			bIsAttacking ? TEXT("true") : TEXT("false"),
+			bComboWindowOpen ? TEXT("true") : TEXT("false"),
+			CurrentComboIndex));
+
+	//既に攻撃中なら何もしない
+	if (bIsAttacking)
+	{
+		if (bComboWindowOpen)
+		{
+			//窓口が開いてるので即座にコンボへ
+			int32 NextIndex = CurrentComboIndex + 1;
+			if (NextIndex < ComboSteps.Num())
+			{
+				ExecuteComboStep(NextIndex);
+			}
+		}
+		else
+		{
+			//窓口が開いていなければバッファに積んで待つ
+			bComboInputBuffered = true;
+
+			GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange, TEXT("Tunda"));
+		}
+		return;
+	}
+
+	//最初の一段目
+	ExecuteComboStep(0);
+	
+	//ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	//if (!OwnerCharacter) return;
+	//
+	//HitActorsThisAttack.Empty();
+	//
+	//FGhostActionData Data;
+	//Data.Type	   = EGhostActionType::Attack;
+	//Data.Timestamp = GetWorld()->GetTimeSeconds();
+	//Data.Location  = OwnerCharacter->GetActorLocation();
+	//Data.Rotation  = OwnerCharacter->GetActorRotation();
+	//Data.AnimationTag = FName("Attack");
+	//OnGhostActionRecorded.Broadcast(Data);
+	//
+	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, TEXT("ExAtack"));
+	//
+	//
+	////モンタージュがセットされていれば再生
+	//if (AttackMontage)
+	//{
+	//	//bIsAttaking = true;
+	//	OwnerCharacter->PlayAnimMontage(AttackMontage);
+	//}
+}
+
+void UCombatComponent::ExecuteComboStep(int32 StepIndex)
+{
+	if (!ComboSteps.IsValidIndex(StepIndex)) return;
+
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+		FString::Printf(TEXT("コンボ %d段目 実行"), StepIndex + 1));
+
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter) return;
 
+	const FComboStepData& Step = ComboSteps[StepIndex];
+
+	//状態更新
+	CurrentComboIndex = StepIndex;
+	bIsAttacking = true;
+	bComboWindowOpen = false;
+	bComboInputBuffered = false;
+	HitActorsThisAttack.Empty();
+
+	//コンボリセットタイマーをリセット
+	GetWorld()->GetTimerManager().ClearTimer(ComboResetTimerHandle);
+	GetWorld()->GetTimerManager().SetTimer(
+		ComboResetTimerHandle,
+		this,
+		&UCombatComponent::OnComboResetTimeout,
+		Step.ComboResetTime,
+		false
+	);
+
+	//GhostActionに記録
+	FGhostActionData Data;
+	Data.Type = EGhostActionType::Attack;
+	Data.Timestamp = GetWorld()->GetTimeSeconds();
+	Data.Location = OwnerCharacter->GetActorLocation();
+	Data.Rotation = OwnerCharacter->GetActorRotation();
+	Data.AnimationTag = FName(*FString::Printf(TEXT("Attack%d"), StepIndex + 1));
+	OnGhostActionRecorded.Broadcast(Data);
+
+	//モンタージュ再生
+	if (Step.Montage)
+	{
+		OwnerCharacter->PlayAnimMontage(Step.Montage);
+	}
+}
+
+
+void UCombatComponent::OpenComboWindow()
+{
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Green,
+		TEXT("コンボ窓口オープン"));
+
+	bComboWindowOpen = true;
+
+	//バッファに入力が積まれていれば即次のコンボへ
+	if (bComboInputBuffered)
+	{
+		bComboInputBuffered = false;
+		int32 NextIndex = CurrentComboIndex + 1;
+		if (NextIndex < ComboSteps.Num())
+		{
+			ExecuteComboStep(NextIndex);
+		}
+	}
+}
+
+
+void UCombatComponent::CloseComboWindow()
+{
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Purple,
+		FString::Printf(TEXT("CloseComboWindow: Index=%d"), CurrentComboIndex));
+
+	bComboWindowOpen = false;
+
+	// 4段目が終わったらリセット
+	//if (CurrentComboIndex >= ComboSteps.Num() - 1)
+	//{
+	//	OnComboResetTimeout();
+	//}
+}
+
+void UCombatComponent::OnComboResetTimeout()
+{
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red,
+		TEXT("コンボリセット"));
+
+	CurrentComboIndex = 0;
+	bIsAttacking = false;
+	bComboWindowOpen = false;
+	bComboInputBuffered = false;
+	HitActorsThisAttack.Empty();
+	GetWorld()->GetTimerManager().ClearTimer(ComboResetTimerHandle);
+}
+
+
+void UCombatComponent::CheckHit()
+{
+	if (!ComboSteps.IsValidIndex(CurrentComboIndex)) return;
+
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	if (!OwnerCharacter) return;
+
+	const FComboStepData& Step = ComboSteps[CurrentComboIndex];
+
 	//キャラクターの前方にSphereTrace
 	FVector Start = OwnerCharacter->GetActorLocation();
-	FVector End = Start + OwnerCharacter->GetActorForwardVector() * AttackRange;
+	FVector End = Start + OwnerCharacter->GetActorForwardVector() * Step.HitRange;;
 
 	TArray<FHitResult> HitResults;
-	FCollisionShape Sphere = FCollisionShape::MakeSphere(AttackRadius);
+	FCollisionShape Sphere = FCollisionShape::MakeSphere(Step.HitRadius);
 
-	DrawDebugSphere(GetWorld(), Start, AttackRadius, 12, FColor::Yellow, false, 1.f);
-	DrawDebugSphere(GetWorld(), End, AttackRadius, 12, FColor::Red, false, 1.f);
+	DrawDebugSphere(GetWorld(), Start, Step.HitRadius, 12, FColor::Yellow, false, 1.f);
+	DrawDebugSphere(GetWorld(), End, Step.HitRadius, 12, FColor::Red, false, 1.f);
 	DrawDebugLine(GetWorld(), Start, End, FColor::Green, false, 1.f);
 
 	bool bHit = GetWorld()->SweepMultiByChannel(
@@ -46,17 +207,13 @@ void UCombatComponent::CheckHit()
 		Sphere
 	);
 
-	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
-		FString::Printf(TEXT("CheckHit呼ばれた: ヒット数=%d"), HitResults.Num()));
+	//GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow, FString::Printf(TEXT("CheckHit呼ばれた: ヒット数=%d"), HitResults.Num()));
 
 	if (!bHit) return;
 
 	for (const FHitResult& Hit : HitResults)
 	{
 		AActor* HitActor = Hit.GetActor();
-
-		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
-			FString::Printf(TEXT("ヒットしたActor: %s"), *GetNameSafe(HitActor)));
 
 		if (!HitActor || HitActor == OwnerCharacter) continue;
 
@@ -67,58 +224,40 @@ void UCombatComponent::CheckHit()
 		//ダメージを与える
 		UGameplayStatics::ApplyDamage(
 			HitActor,
-			AttackDamage,
+			Step.Damage,
 			OwnerCharacter->GetController(),
 			OwnerCharacter,
 			UDamageType::StaticClass()
 		);
 
-		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
-			FString::Printf(TEXT("EnemyキャストできたかL %s"), Cast<AEnemyChara>(HitActor) ? TEXT("OK") : TEXT("NO")));
+		//GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange, FString::Printf(TEXT("EnemyキャストできたかL %s"), Cast<AEnemyChara>(HitActor) ? TEXT("OK") : TEXT("NO")));
+
+		//4段目の吹き飛ばし
+		if (Step.LaunchForce > 0.f)
+		{
+			if (ACharacter* HitCharacter = Cast<ACharacter>(HitActor))
+			{
+				FVector LaunchDir = (HitActor->GetActorLocation() - OwnerCharacter->GetActorLocation()).GetSafeNormal();
+				LaunchDir.Z = 0.5f;
+				HitCharacter->LaunchCharacter(LaunchDir * Step.LaunchForce, true, true);
+			}
+		}
 
 		//エネルギー加算を通知
 		if (Cast<AEnemyChara>(HitActor))
 		{
-			OnHitEnemy.Broadcast(EnergyGainPerHit);
+			OnHitEnemy.Broadcast(Step.Damage * 0.5f);
 		}
 	}
 }
 
-void UCombatComponent::ExecuteAttack()
-{
-	//既に攻撃中なら何もしない
-	if (bIsAttaking) return;
-	
-	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	if (!OwnerCharacter) return;
-
-	HitActorsThisAttack.Empty();
-
-	FGhostActionData Data;
-	Data.Type	   = EGhostActionType::Attack;
-	Data.Timestamp = GetWorld()->GetTimeSeconds();
-	Data.Location  = OwnerCharacter->GetActorLocation();
-	Data.Rotation  = OwnerCharacter->GetActorRotation();
-	Data.AnimationTag = FName("Attack");
-	OnGhostActionRecorded.Broadcast(Data);
-
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, TEXT("ExAtack"));
-
-
-	//モンタージュがセットされていれば再生
-	if (AttackMontage)
-	{
-		//bIsAttaking = true;
-		OwnerCharacter->PlayAnimMontage(AttackMontage);
-	}
-}
 
 void UCombatComponent::ExecuteDodge()
 {
 	//リキャスト中なら何もしない
 	if (!bCanDodge) return;
 
-	if (bIsAttaking) return;
+	if (bIsAttacking) return;
 
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter) return;
@@ -178,6 +317,12 @@ void UCombatComponent::ExecuteDodge()
 		false
 	);
 
+	UActionMovementComponent* ActionMoveComp = Cast<UActionMovementComponent>(MoveComp);
+	if (ActionMoveComp)
+	{
+		ActionMoveComp->bIsDodging = true;
+	}
+
 	//方向ベクトルを正規化して、回避の力を掛ける
 	FVector LaunchVelocity = DodgeDirection.GetSafeNormal() * DodgeForce;
 
@@ -192,6 +337,12 @@ void UCombatComponent::EndDodge()
 	if (OwnerCharacter && OwnerCharacter->GetCharacterMovement())
 	{
 		UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement();
+
+		UActionMovementComponent* ActionMoveComp = Cast<UActionMovementComponent>(MoveComp);
+		if (ActionMoveComp)
+		{
+			ActionMoveComp->bIsDodging = false;
+		}
 
 		//記録しておいた元の重力と摩擦に戻す
 		MoveComp->GravityScale = CachedGravityScale;

@@ -134,6 +134,20 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Ghost")
 	TSubclassOf<AGhostCharacter> GhostCharacterClass;
 
+	//ジャンプボタンを押した時刻
+	float JumpPressedTime;
+
+	// 短押し・長押しの値（秒）
+	UPROPERTY(EditAnywhere, Category = "Jump")
+	float JumpHoldThreshold;
+
+	//短押しのジャンプ力
+	UPROPERTY(EditAnywhere, Category = "Jump")
+	float JumpZVelocityShort;
+
+	void OnJumpPressed();
+	void OnJumpReleased();
+
 public:
 	//現在のエネルギー
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ghost")
