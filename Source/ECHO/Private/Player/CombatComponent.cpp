@@ -2,221 +2,238 @@
 //コンバットコンポーネントソース
 
 #include "Player/CombatComponent.h"
+#include "Player/ActionMovementComponent.h"
 #include "Enemy/EnemyChara.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "DrawDebugHelpers.h"
 
-#include "DrawDebugHelpers.h"//画面デバッグ用
-//GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("A"));
-
-UCombatComponent::UCombatComponent() :
-	bIsAttaking(false),
-	DodgeForce(6000.f),
-	bHasAirDodged(false),
-	DodgeDuration(0.1f),
-	DodgeCooldown(0.5f),
-	bCanDodge(true)
+UCombatComponent::UCombatComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;
-}
-
-void UCombatComponent::CheckHit()
-{
-	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	if (!OwnerCharacter) return;
-
-	//キャラクターの前方にSphereTrace
-	FVector Start = OwnerCharacter->GetActorLocation();
-	FVector End = Start + OwnerCharacter->GetActorForwardVector() * AttackRange;
-
-	TArray<FHitResult> HitResults;
-	FCollisionShape Sphere = FCollisionShape::MakeSphere(AttackRadius);
-
-	DrawDebugSphere(GetWorld(), Start, AttackRadius, 12, FColor::Yellow, false, 1.f);
-	DrawDebugSphere(GetWorld(), End, AttackRadius, 12, FColor::Red, false, 1.f);
-	DrawDebugLine(GetWorld(), Start, End, FColor::Green, false, 1.f);
-
-	bool bHit = GetWorld()->SweepMultiByChannel(
-		HitResults,
-		Start,
-		End,
-		FQuat::Identity,
-		ECC_Pawn,
-		Sphere
-	);
-
-	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
-		FString::Printf(TEXT("CheckHit呼ばれた: ヒット数=%d"), HitResults.Num()));
-
-	if (!bHit) return;
-
-	for (const FHitResult& Hit : HitResults)
-	{
-		AActor* HitActor = Hit.GetActor();
-
-		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
-			FString::Printf(TEXT("ヒットしたActor: %s"), *GetNameSafe(HitActor)));
-
-		if (!HitActor || HitActor == OwnerCharacter) continue;
-
-		//同じ攻撃で2回当たらないようにする
-		if (HitActorsThisAttack.Contains(HitActor)) continue;
-		HitActorsThisAttack.Add(HitActor);
-
-		//ダメージを与える
-		UGameplayStatics::ApplyDamage(
-			HitActor,
-			AttackDamage,
-			OwnerCharacter->GetController(),
-			OwnerCharacter,
-			UDamageType::StaticClass()
-		);
-
-		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
-			FString::Printf(TEXT("EnemyキャストできたかL %s"), Cast<AEnemyChara>(HitActor) ? TEXT("OK") : TEXT("NO")));
-
-		//エネルギー加算を通知
-		if (Cast<AEnemyChara>(HitActor))
-		{
-			OnHitEnemy.Broadcast(EnergyGainPerHit);
-		}
-	}
+    PrimaryComponentTick.bCanEverTick = false;
 }
 
 void UCombatComponent::ExecuteAttack()
 {
-	//既に攻撃中なら何もしない
-	if (bIsAttaking) return;
-	
-	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	if (!OwnerCharacter) return;
+    if (bIsAttacking)
+    {
+        if (bComboWindowOpen)
+        {
+            int32 NextIndex = CurrentComboIndex + 1;
+            if (NextIndex < ComboSteps.Num())
+                ExecuteComboStep(NextIndex);
+        }
+        else
+        {
+            bComboInputBuffered = true;
+        }
+        return;
+    }
 
-	HitActorsThisAttack.Empty();
+    ExecuteComboStep(0);
+}
 
-	FGhostActionData Data;
-	Data.Type	   = EGhostActionType::Attack;
-	Data.Timestamp = GetWorld()->GetTimeSeconds();
-	Data.Location  = OwnerCharacter->GetActorLocation();
-	Data.Rotation  = OwnerCharacter->GetActorRotation();
-	Data.AnimationTag = FName("Attack");
-	OnGhostActionRecorded.Broadcast(Data);
+void UCombatComponent::ExecuteComboStep(int32 StepIndex)
+{
+    if (!ComboSteps.IsValidIndex(StepIndex)) return;
 
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, TEXT("ExAtack"));
+    ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+    if (!OwnerCharacter) return;
 
+    const FComboStepData& Step = ComboSteps[StepIndex];
 
-	//モンタージュがセットされていれば再生
-	if (AttackMontage)
-	{
-		//bIsAttaking = true;
-		OwnerCharacter->PlayAnimMontage(AttackMontage);
-	}
+    CurrentComboIndex = StepIndex;
+    bIsAttacking = true;
+    bComboWindowOpen = false;
+    bComboInputBuffered = false;
+    HitActorsThisAttack.Empty();
+
+    GetWorld()->GetTimerManager().ClearTimer(ComboResetTimerHandle);
+    GetWorld()->GetTimerManager().SetTimer(
+        ComboResetTimerHandle,
+        this,
+        &UCombatComponent::OnComboResetTimeout,
+        Step.ComboResetTime,
+        false
+    );
+
+    FGhostActionData Data;
+    Data.Type = EGhostActionType::Attack;
+    Data.Timestamp = GetWorld()->GetTimeSeconds();
+    Data.Location = OwnerCharacter->GetActorLocation();
+    Data.Rotation = OwnerCharacter->GetActorRotation();
+    Data.AnimationTag = FName(*FString::Printf(TEXT("Attack%d"), StepIndex + 1));
+    OnGhostActionRecorded.Broadcast(Data);
+
+    if (Step.Montage)
+        OwnerCharacter->PlayAnimMontage(Step.Montage);
+}
+
+void UCombatComponent::OpenComboWindow()
+{
+    bComboWindowOpen = true;
+
+    if (bComboInputBuffered)
+    {
+        bComboInputBuffered = false;
+        int32 NextIndex = CurrentComboIndex + 1;
+        if (NextIndex < ComboSteps.Num())
+            ExecuteComboStep(NextIndex);
+    }
+}
+
+void UCombatComponent::CloseComboWindow()
+{
+    bComboWindowOpen = false;
+}
+
+void UCombatComponent::OnComboResetTimeout()
+{
+    CurrentComboIndex = 0;
+    bIsAttacking = false;
+    bComboWindowOpen = false;
+    bComboInputBuffered = false;
+    HitActorsThisAttack.Empty();
+    GetWorld()->GetTimerManager().ClearTimer(ComboResetTimerHandle);
+}
+
+void UCombatComponent::CheckHit()
+{
+    if (!ComboSteps.IsValidIndex(CurrentComboIndex)) return;
+
+    ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+    if (!OwnerCharacter) return;
+
+    const FComboStepData& Step = ComboSteps[CurrentComboIndex];
+
+    FVector Start = OwnerCharacter->GetActorLocation();
+    FVector End = Start + OwnerCharacter->GetActorForwardVector() * Step.HitRange;
+
+    TArray<FHitResult> HitResults;
+    FCollisionShape Sphere = FCollisionShape::MakeSphere(Step.HitRadius);
+
+    DrawDebugSphere(GetWorld(), Start, Step.HitRadius, 12, FColor::Yellow, false, 1.f);
+    DrawDebugSphere(GetWorld(), End, Step.HitRadius, 12, FColor::Red, false, 1.f);
+    DrawDebugLine(GetWorld(), Start, End, FColor::Green, false, 1.f);
+
+    bool bHit = GetWorld()->SweepMultiByChannel(
+        HitResults, Start, End,
+        FQuat::Identity, ECC_Pawn, Sphere);
+
+    if (!bHit) return;
+
+    for (const FHitResult& Hit : HitResults)
+    {
+        AActor* HitActor = Hit.GetActor();
+        if (!HitActor || HitActor == OwnerCharacter) continue;
+        if (HitActorsThisAttack.Contains(HitActor)) continue;
+        HitActorsThisAttack.Add(HitActor);
+
+        UGameplayStatics::ApplyDamage(
+            HitActor, Step.Damage,
+            OwnerCharacter->GetController(),
+            OwnerCharacter,
+            UDamageType::StaticClass());
+
+        if (Step.LaunchForce > 0.f)
+        {
+            if (ACharacter* HitCharacter = Cast<ACharacter>(HitActor))
+            {
+                FVector LaunchDir = (HitActor->GetActorLocation()
+                    - OwnerCharacter->GetActorLocation()).GetSafeNormal();
+                LaunchDir.Z = 0.5f;
+                HitCharacter->LaunchCharacter(
+                    LaunchDir * Step.LaunchForce, true, true);
+            }
+        }
+
+        if (Cast<AEnemyChara>(HitActor))
+            OnHitEnemy.Broadcast(Step.Damage * 0.5f);
+    }
 }
 
 void UCombatComponent::ExecuteDodge()
 {
-	//リキャスト中なら何もしない
-	if (!bCanDodge) return;
+    if (!bCanDodge) return;
+    if (bIsAttacking) return;
 
-	if (bIsAttaking) return;
+    ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+    if (!OwnerCharacter) return;
 
-	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	if (!OwnerCharacter) return;
+    UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement();
+    if (!MoveComp) return;
 
-	UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement();
-	if (!MoveComp) return;
+    FVector DodgeDirection = MoveComp->GetLastInputVector();
+    if (DodgeDirection.IsNearlyZero())
+        DodgeDirection = OwnerCharacter->GetActorForwardVector();
 
-	//直前に入力をしていた移動方向を取得
-	FVector DodgeDirection = MoveComp->GetLastInputVector();
+    FGhostActionData Data;
+    Data.Type = EGhostActionType::Dodge;
+    Data.Timestamp = GetWorld()->GetTimeSeconds();
+    Data.Location = OwnerCharacter->GetActorLocation();
+    Data.Rotation = OwnerCharacter->GetActorRotation();
+    Data.Direction = DodgeDirection.GetSafeNormal();
+    OnGhostActionRecorded.Broadcast(Data);
 
-	//もし入力をしていなかったらキャラクターの前の方向にする
-	if (DodgeDirection.IsNearlyZero())
-	{
-		DodgeDirection = OwnerCharacter->GetActorForwardVector();
-	}
+    if (MoveComp->IsFalling())
+    {
+        if (bHasAirDodged) return;
+        bHasAirDodged = true;
+    }
 
-	FGhostActionData Data;
-	Data.Type      = EGhostActionType::Dodge;
-	Data.Timestamp = GetWorld()->GetTimeSeconds();
-	Data.Location  = OwnerCharacter->GetActorLocation();
-	Data.Rotation = OwnerCharacter->GetActorRotation();
-	Data.Direction = DodgeDirection.GetSafeNormal();
-	OnGhostActionRecorded.Broadcast(Data);
+    bCanDodge = false;
+    OwnerCharacter->GetWorldTimerManager().SetTimer(
+        DodgeCoolDownTimerHandle, this,
+        &UCombatComponent::ResetDodgeCooldown,
+        DodgeCooldown, false);
 
-	//回数制限のロジック
-	if (MoveComp->IsFalling())
-	{
-		if (bHasAirDodged) return;
-		bHasAirDodged = true;
-	}
+    DodgeDirection.Z = 0.f;
+    CachedGravityScale = MoveComp->GravityScale;
+    CachedGroundFriction = MoveComp->GroundFriction;
+    MoveComp->GravityScale = 0.f;
+    MoveComp->GroundFriction = 0.f;
 
-	//回避フラグを折ってタイマー開始
-	bCanDodge = false;
-	OwnerCharacter->GetWorldTimerManager().SetTimer(
-		DodgeCoolDownTimerHandle,
-		this,
-		&UCombatComponent::ResetDodgeCooldown,
-		DodgeCooldown,
-		false
-	);
+    OwnerCharacter->GetWorldTimerManager().SetTimer(
+        DodgeTimerHandle, this,
+        &UCombatComponent::EndDodge,
+        DodgeDuration, false);
 
-	//Z軸を無視して完全に水平方向のベクトルにする
-	DodgeDirection.Z = 0.f;
+    UActionMovementComponent* ActionMoveComp =
+        Cast<UActionMovementComponent>(MoveComp);
+    if (ActionMoveComp) ActionMoveComp->bIsDodging = true;
 
-	//重力と摩擦を0にする直前に、現在の設定を記録しておく
-	CachedGravityScale = MoveComp->GravityScale;
-	CachedGroundFriction = MoveComp->GroundFriction;
-
-	MoveComp->GravityScale = 0.0f;
-	MoveComp->GroundFriction = 0.0f;
-
-	OwnerCharacter->GetWorldTimerManager().SetTimer(
-		DodgeTimerHandle,
-		this,
-		&UCombatComponent::EndDodge,
-		DodgeDuration,
-		false
-	);
-
-	//方向ベクトルを正規化して、回避の力を掛ける
-	FVector LaunchVelocity = DodgeDirection.GetSafeNormal() * DodgeForce;
-
-	//キャラクターを弾き飛ばす
-	OwnerCharacter->LaunchCharacter(LaunchVelocity, true, true);
+    OwnerCharacter->LaunchCharacter(
+        DodgeDirection.GetSafeNormal() * DodgeForce, true, true);
 }
 
-//重力を戻す関数
 void UCombatComponent::EndDodge()
 {
-	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	if (OwnerCharacter && OwnerCharacter->GetCharacterMovement())
-	{
-		UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement();
+    ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+    if (!OwnerCharacter) return;
 
-		//記録しておいた元の重力と摩擦に戻す
-		MoveComp->GravityScale = CachedGravityScale;
-		MoveComp->GroundFriction = CachedGroundFriction;
+    UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement();
+    if (!MoveComp) return;
 
-		//横方向の勢いを殺す（Z軸の落下速度はそのまま残す）
-		FVector CurrentVelocity = MoveComp->Velocity;
+    UActionMovementComponent* ActionMoveComp =
+        Cast<UActionMovementComponent>(MoveComp);
+    if (ActionMoveComp) ActionMoveComp->bIsDodging = false;
 
-		// XとYの速度を0にする（完全に真下に落ちる）
-		// ※もし「ほんの少しだけ慣性を残したい」場合は = 0.0f ではなく *= 0.1f などにしてください
-		CurrentVelocity.X = 0.0f;
-		CurrentVelocity.Y = 0.0f;
+    MoveComp->GravityScale = CachedGravityScale;
+    MoveComp->GroundFriction = CachedGroundFriction;
 
-		MoveComp->Velocity = CurrentVelocity;
-	}
+    FVector Vel = MoveComp->Velocity;
+    Vel.X = 0.f;
+    Vel.Y = 0.f;
+    MoveComp->Velocity = Vel;
 }
 
-//回避フラグを可能に戻す関数
 void UCombatComponent::ResetDodgeCooldown()
 {
-	bCanDodge = true;
+    bCanDodge = true;
 }
 
-//着地時に呼ばれるリセット処理
 void UCombatComponent::ResetAirDodge()
 {
-	bHasAirDodged = false;
+    bHasAirDodged = false;
 }

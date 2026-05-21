@@ -152,4 +152,19 @@ public:
 	int32 MaxGhostCount;
 
 
+private:
+	// ƒWƒƒƒ“ƒvŠÖ˜A
+	float JumpPressedTime = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "Jump")
+	float JumpHoldThreshold = 0.2f;
+
+	UPROPERTY(EditAnywhere, Category = "Jump")
+	float JumpZVelocityShort = 500.f;
+
+	UPROPERTY(EditAnywhere, Category = "Jump")
+	float JumpZVelocityLong = 800.f;
+
+	void OnJumpPressed();
+	void OnJumpReleased();
 };

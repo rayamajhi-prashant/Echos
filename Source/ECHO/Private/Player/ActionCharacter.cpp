@@ -159,8 +159,8 @@ void AActionCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AActionCharacter::Look);
 
 		//ジャンプ
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &AActionCharacter::OnJumpPressed);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &AActionCharacter::OnJumpReleased);
 
 		//回避のバインド
 		EnhancedInputComponent->BindAction(DodgeAction, ETriggerEvent::Started, this, &AActionCharacter::Dodge);
@@ -251,20 +251,74 @@ void AActionCharacter::OnJumped_Implementation()
 {
 	Super::OnJumped_Implementation();
 
+	UActionMovementComponent* MoveComp = GetActionMovementComponent();
+	if (!MoveComp) return;
+
 	//現在のジャンプ回数を確認
 	//JumpCurrentCount はACharacterに標準で用意されている「現在何回目のジャンプか」を持つ変数
 	if (JumpCurrentCount == 1)
 	{
 		//【1段目のジャンプ時の処理】
+		MoveComp->AirControl = MoveComp->AirControlFirstJump;
+
+
 		//地面を蹴る土煙のエフェクト(Niagara)を足元に出す
 		//「ハッ！」という通常ジャンプのボイスやSEを再生する
 	}
 	else if (JumpCurrentCount == 2)
 	{
 		//【2段目のジャンプ（エアハイク）時の処理】
+		MoveComp->AirControl = MoveComp->AirControlSecondJump;
+
+		FVector Vel = MoveComp->Velocity;
+		Vel.Z = MoveComp->SecondJumpZVelocity;
+		MoveComp->Velocity = Vel;
+
+		// 入力方向に一度だけ方向転換
+		FVector InputVector = MoveComp->GetLastInputVector();
+		if (!InputVector.IsNearlyZero())
+		{
+			FVector InputDir = InputVector.GetSafeNormal2D();
+			SetActorRotation(InputDir.Rotation());
+
+			float HorizontalSpeed = FVector(Vel.X, Vel.Y, 0.f).Size();
+			MoveComp->Velocity.X = InputDir.X * HorizontalSpeed;
+			MoveComp->Velocity.Y = InputDir.Y * HorizontalSpeed;
+		}
+
+
 		//空中に魔法陣や衝撃波のエフェクトを出す
 		//キャラクターが空中でクルッと回転するような専用のモンタージュを再生する
 		//Z軸（上方向）に少し追加の初速を与えて、滞空時間を伸ばす
+	}
+}
+
+void AActionCharacter::OnJumpPressed()
+{
+	JumpPressedTime = GetWorld()->GetTimeSeconds();
+	Jump();
+}
+
+void AActionCharacter::OnJumpReleased()
+{
+	StopJumping();
+
+	// 二段ジャンプ中はZ速度を触らない
+	if (JumpCurrentCount >= 2) return;
+
+	float HoldDuration = GetWorld()->GetTimeSeconds() - JumpPressedTime;
+
+	UActionMovementComponent* MoveComp = GetActionMovementComponent();
+	if (!MoveComp) return;
+
+	if (MoveComp->IsFalling())
+	{
+		FVector Vel = MoveComp->Velocity;
+		if (HoldDuration < JumpHoldThreshold)
+		{
+			Vel.Z = FMath::Min(Vel.Z, JumpZVelocityShort);
+		}
+		MoveComp->Velocity = Vel;
 	}
 }
 
@@ -276,6 +330,14 @@ void AActionCharacter::Landed(const FHitResult& Hit)
 	//着地した瞬間に「ドスッ」という重いSEと、足元に砂埃エフェクトを出す
 	//高い場所から落ちた場合（落下速度 Z が一定以上だった場合）、数フレームだけ移動入力を無視して「着地硬直」のアニメーションを入れる
 	//空中コンボ中だった場合、コンボのステート（状態）をリセットする
+
+	UActionMovementComponent* MoveComp = GetActionMovementComponent();
+	if (MoveComp)
+	{
+		MoveComp->AirControl = 0.05f;
+		bool bWasSprinting = MoveComp->IsSprinting();
+		MoveComp->StartLandingRecovery(bWasSprinting);
+	}
 
 	if (CombatComponent)
 	{

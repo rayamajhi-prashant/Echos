@@ -13,96 +13,94 @@
 #include "CombatComponent.generated.h"
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnGhostAction, const FGhostActionData&);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnHitEnemyDelegate, float);
+
+USTRUCT(BlueprintType)
+struct FComboStepData
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere)
+    UAnimMontage* Montage = nullptr;
+
+    UPROPERTY(EditAnywhere)
+    float HitRadius = 60.f;
+
+    UPROPERTY(EditAnywhere)
+    float HitRange = 100.f;
+
+    UPROPERTY(EditAnywhere)
+    float Damage = 20.f;
+
+    // 吹き飛ばし力（0なら吹き飛ばしなし）
+    UPROPERTY(EditAnywhere)
+    float LaunchForce = 0.f;
+
+    // コンボ入力受付開始タイミング（0?1）
+    UPROPERTY(EditAnywhere)
+    float ComboWindowStart = 0.5f;
+
+    // コンボリセットまでの時間
+    UPROPERTY(EditAnywhere)
+    float ComboResetTime = 1.0f;
+};
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class ECHO_API UCombatComponent : public UActorComponent
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
 
 public:
-	UCombatComponent();
+    UCombatComponent();
 
-	//攻撃を実行する関数
-	void ExecuteAttack();
+    void ExecuteAttack();
+    void ExecuteDodge();
+    void ResetAirDodge();
 
-	//回避を実行する関数
-	void ExecuteDodge();
+    UFUNCTION(BlueprintCallable, Category = "Combat")
+    void CheckHit();
 
-	//着地したときに呼び出すリセット関数
-	void ResetAirDodge();
+    UFUNCTION(BlueprintCallable, Category = "Combat")
+    void OpenComboWindow();
 
-	FOnGhostAction OnGhostActionRecorded;
+    UFUNCTION(BlueprintCallable, Category = "Combat")
+    void CloseComboWindow();
+
+    FOnGhostAction OnGhostActionRecorded;
+    FOnHitEnemyDelegate OnHitEnemy;
 
 protected:
-	//攻撃状態かどうか
-	bool bIsAttaking;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Combo")
+    TArray<FComboStepData> ComboSteps;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Animation")
-	UAnimMontage* AttackMontage;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
+    float DodgeForce = 6000.f;
 
-	//回避の強さ
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
-	float DodgeForce;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
+    float DodgeDuration = 0.1f;
 
-	//空中で回避したかどうかを記録するフラグ
-	bool bHasAirDodged;
-
-	//回避の持続時間
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
-	float DodgeDuration;
-
-	//回避のリキャスト時間
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
-	float DodgeCooldown;
-
-	//回避可能かどうかのフラグ
-	bool bCanDodge;
-
-	//タイマーハンドル
-	FTimerHandle DodgeTimerHandle;
-	FTimerHandle DodgeCoolDownTimerHandle;
-	
-	//回避を再び可能にする関数
-	void ResetDodgeCooldown();
-
-	//重力を元に戻す関数
-	void EndDodge();
-
-	//元の値を記憶しておくための変数
-	float CachedGravityScale;		//重力
-	float CachedGroundFriction;		//摩擦
-
-
-
-	//------仮攻撃判定等------
-public:
-	//AnimNotifyから呼ぶヒット判定関数
-	UFUNCTION(BlueprintCallable, Category = "Combat")
-	void CheckHit();
-
-	//エネルギー加算のデリゲート
-	DECLARE_MULTICAST_DELEGATE_OneParam(FOnHitEnemy, float);
-	FOnHitEnemy OnHitEnemy;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
+    float DodgeCooldown = 0.5f;
 
 private:
-	//1回の攻撃で複数回ヒットしないようにするフラグ
-	TArray<AActor*> HitActorsThisAttack;
+    int32 CurrentComboIndex = 0;
+    bool bIsAttacking = false;
+    bool bComboWindowOpen = false;
+    bool bComboInputBuffered = false;
 
-	//ヒット判定の範囲
-	UPROPERTY(EditAnywhere, Category = "Combat")
-	float AttackRadius = 80.f;
+    FTimerHandle ComboResetTimerHandle;
+    FTimerHandle DodgeTimerHandle;
+    FTimerHandle DodgeCoolDownTimerHandle;
 
-	//ヒット判定の距離
-	UPROPERTY(EditAnywhere, Category = "Combat")
-	float AttackRange = 120.f;
+    bool bCanDodge = true;
+    bool bHasAirDodged = false;
+    float CachedGravityScale = 1.f;
+    float CachedGroundFriction = 8.f;
 
-	//1ヒットあたりのダメージ
-	UPROPERTY(EditAnywhere, Category = "Combat")
-	float AttackDamage = 20.f;
+    TArray<AActor*> HitActorsThisAttack;
 
-	//1ヒットあたりのエネルギー増加量
-	UPROPERTY(EditAnywhere, Category = "Combat")
-	float EnergyGainPerHit = 15.f;
-
-
+    void ExecuteComboStep(int32 StepIndex);
+    void OnComboResetTimeout();
+    void EndDodge();
+    void ResetDodgeCooldown();
 };
