@@ -38,12 +38,18 @@ AActionCharacter::AActionCharacter(const FObjectInitializer& ObjectInitializer)
 	//移動方向にキャラクターが自動でスッと向くようにする
 	GetActionMovementComponent()->bOrientRotationToMovement = true;
 
-	//キャラクターが振り向く速度
-	GetActionMovementComponent()->RotationRate = FRotator(0.0f, 1000.0f, 0.0f);
+	//キャラクターの移動入力がある方向へ、自動的に滑らかに向きを変える設定
+	if (UActionMovementComponent* MoveComp = GetActionMovementComponent())
+	{
+		MoveComp->bOrientRotationToMovement = true;
+		MoveComp->RotationRate = FRotator(0.f, 1000.f, 0.f);  //旋回速度
+	}
 
-	//戦闘コンポーネントを作成してキャラクターに追加する
+	//戦闘コンポーネントの生成
 	CombatComponent = CreateDefaultSubobject<UCombatComponent>(TEXT("CombatComponent"));
 
+	//ロックオンコンポーネントの生成
+	LockOnComponent = CreateDefaultSubobject<ULockOnComponent>(TEXT("LockOnComponent"));
 
 	// ----------------------------------------------------
 	//カメラの設定（簡易的）
@@ -72,14 +78,14 @@ AActionCharacter::AActionCharacter(const FObjectInitializer& ObjectInitializer)
 
 	//カメラ本体の作成と取り付け
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
-	// スプリングアームの先端に取り付ける！
+	// スプリングアームの先端に取り付ける
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 
 	// カメラ自体はアームの動きに追従するだけで、自分では回転しない
 	FollowCamera->bUsePawnControlRotation = false;
 
 
-	//残像コンポーネントを作成してキャラクターに追加する
+	//分身コンポーネントの生成
 	GhostRecorder = CreateDefaultSubobject<UGhostRecorderComponent>(TEXT("GhostRecorder"));
 }
 
@@ -92,21 +98,18 @@ void AActionCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	//エネルギー0スタート
 	CurrentEnergy = 0.f;
 
 	//CombatComponentのヒットデリゲートを取得
 	if (CombatComponent)
 	{
-		CombatComponent->OnHitEnemy.AddUObject(
-			this,
-			&AActionCharacter::OnHitEnemy
-		);
+		CombatComponent->OnHitEnemy.AddUObject(this, &AActionCharacter::OnHitEnemy);
 	}
 
-
-	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow,
-	//	FString::Printf(TEXT("BeginPlay GhostRecorderアドレス: %p"), GhostRecorder));
+	if (LockOnComponent)
+	{
+		LockOnComponent->OnLockOnChanged.AddUObject(this, &AActionCharacter::OnLockOnChanged);
+	}
 
 	//プレイヤーコントローラーを取得しIMCを登録する
 	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
@@ -122,6 +125,39 @@ void AActionCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	//ロックオン中のカメラ制御
+	if (LockOnComponent && LockOnComponent->IsLockedOn())
+	{
+		AActor* Target = LockOnComponent->GetTarget();
+		if (Target && Controller)
+		{
+			//プレイヤーとターゲットの中間点を計算
+			FVector PlayerLocation = GetActorLocation();
+			FVector TargetLocation = Target->GetActorLocation();
+
+			//カメラからターゲットへの方向を計算
+			FVector CameraLocation = FollowCamera->GetComponentLocation();
+			FVector ToTarget = (TargetLocation - CameraLocation).GetSafeNormal();
+
+			FRotator TargetRotation = ToTarget.Rotation();
+
+			//滑らかにカメラを向ける
+			FRotator CurrentRotation = Controller->GetControlRotation();
+			FRotator NewRotation = FMath::RInterpTo(CurrentRotation, TargetRotation, DeltaTime, 5.f);
+
+			Controller->SetControlRotation(NewRotation);
+
+			//プレイヤーも敵の方向を向く
+			FVector ToTargetFlat = (TargetLocation - PlayerLocation);
+			ToTargetFlat.Z = 0.f;
+			if (!ToTargetFlat.IsNearlyZero())
+			{
+				FRotator PlayerRotation = ToTargetFlat.GetSafeNormal().Rotation();
+				SetActorRotation(FMath::RInterpTo(GetActorRotation(), PlayerRotation, DeltaTime, 10.f));
+			}
+		}
+	}
+
 	//キャラクターの現在の平行移動速度を取得
 	float CurrentSpeed = GetVelocity().Size2D();
 
@@ -131,7 +167,7 @@ void AActionCharacter::Tick(float DeltaTime)
 		//走っている時間を加算
 		CurrentRunTime += DeltaTime;
 
-		//設定した時間を超えたらダッシュ開始
+		//一定時間走り続けたら、自動的にダッシュモードへ移行
 		if (CurrentRunTime >= TimeToSprint)
 		{
 			StartSprint();
@@ -139,7 +175,7 @@ void AActionCharacter::Tick(float DeltaTime)
 	}
 	else
 	{
-		//立ち止まったら
+		//立ち止まったら計測リセットとダッシュ解除
 		CurrentRunTime = 0.f;
 		StopSprint();
 	}
@@ -151,6 +187,9 @@ void AActionCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	{
 		//攻撃のバインド
 		EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Started, this, &AActionCharacter::Attack);
+
+		//ロックオン
+		EnhancedInputComponent->BindAction(LockOnAction, ETriggerEvent::Started, this, &AActionCharacter::LockOn);
 
 		//移動
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AActionCharacter::Move);
@@ -173,24 +212,46 @@ void AActionCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 void AActionCharacter::Attack()
 {
-	if (!CombatComponent)
+	if (CombatComponent)
 	{
-		return;
+		CombatComponent->ExecuteAttack();
 	}
-
-	CombatComponent->ExecuteAttack();
-
 }
-
 
 void AActionCharacter::OnHitEnemy(float EnergyGain)
 {
+	//ヒット時のエネルギー加算
 	CurrentEnergy = FMath::Clamp(CurrentEnergy + EnergyGain, 0.f, MaxEnergy);
 
-	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Cyan,
-		FString::Printf(TEXT("Energy: %.1f / %.1f"), CurrentEnergy, MaxEnergy));
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Cyan, FString::Printf(TEXT("Energy: %.1f / %.1f"), CurrentEnergy, MaxEnergy));
 }
 
+void AActionCharacter::LockOn()
+{
+	if (LockOnComponent)
+	{
+		LockOnComponent->ToggleLockOn();
+	}
+}
+
+void AActionCharacter::OnLockOnChanged(AActor* NewTarget)
+{
+	if (NewTarget)
+	{
+		//ロックON：プレイヤーをコントローラーのYawに従わせる
+		bUseControllerRotationYaw = true;
+		GetActionMovementComponent()->bOrientRotationToMovement = false;
+		GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Cyan, FString::Printf(TEXT("ロックオン： %s"), *NewTarget->GetName()));
+	}
+	else
+	{
+		//ロックオンOFF：通常の移動方向向きに戻す
+		bUseControllerRotationYaw = false;
+		GetActionMovementComponent()->bOrientRotationToMovement = true;
+		GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Purple,TEXT("FinithLockOn"));
+
+	}
+}
 
 void AActionCharacter::Move(const FInputActionValue& Value)
 {
@@ -274,7 +335,7 @@ void AActionCharacter::OnJumped_Implementation()
 		Vel.Z = MoveComp->SecondJumpZVelocity;
 		MoveComp->Velocity = Vel;
 
-		// 入力方向に一度だけ方向転換
+		//入力方向に一度だけ方向転換
 		FVector InputVector = MoveComp->GetLastInputVector();
 		if (!InputVector.IsNearlyZero())
 		{
@@ -306,11 +367,13 @@ void AActionCharacter::OnJumpReleased()
 	// 二段ジャンプ中はZ速度を触らない
 	if (JumpCurrentCount >= 2) return;
 
+	//ボタンを押していた時間を算出
 	float HoldDuration = GetWorld()->GetTimeSeconds() - JumpPressedTime;
 
 	UActionMovementComponent* MoveComp = GetActionMovementComponent();
 	if (!MoveComp) return;
 
+	//空中でボタンが即座に離された場合、上昇速度の上限を低くカットすることで小ジャンプを表現する
 	if (MoveComp->IsFalling())
 	{
 		FVector Vel = MoveComp->Velocity;
@@ -326,11 +389,7 @@ void AActionCharacter::Landed(const FHitResult& Hit)
 {
 	Super::Landed(Hit);
 
-	//【着地時の処理】
-	//着地した瞬間に「ドスッ」という重いSEと、足元に砂埃エフェクトを出す
-	//高い場所から落ちた場合（落下速度 Z が一定以上だった場合）、数フレームだけ移動入力を無視して「着地硬直」のアニメーションを入れる
-	//空中コンボ中だった場合、コンボのステート（状態）をリセットする
-
+	//着地復帰処理
 	UActionMovementComponent* MoveComp = GetActionMovementComponent();
 	if (MoveComp)
 	{
@@ -343,6 +402,11 @@ void AActionCharacter::Landed(const FHitResult& Hit)
 	{
 		CombatComponent->ResetAirDodge();
 	}
+
+	//【着地時の処理】
+	//着地した瞬間に「ドスッ」という重いSEと、足元に砂埃エフェクトを出す
+	//高い場所から落ちた場合（落下速度 Z が一定以上だった場合）、数フレームだけ移動入力を無視して「着地硬直」のアニメーションを入れる
+	//空中コンボ中だった場合、コンボのステート（状態）をリセットする
 }
 
 //回避
@@ -367,13 +431,14 @@ void AActionCharacter::SummonGhost()
 	//データが空なら召喚しない
 	if (Actions.IsEmpty()) return;
 
-	//プレイヤーの後ろにSpawn
+	//プレイヤー近く（右側）にSpawn
 	FVector SpawnLocation = GetActorLocation() + GetActorRightVector() * 100.f;
 	FRotator SpawnRotation = GetActorRotation();
 
 	FActorSpawnParameters Params;
 	Params.Owner = this;
 
+	//ワールドにスポーン
 	AGhostCharacter* Ghost = GetWorld()->SpawnActor<AGhostCharacter>(
 		GhostCharacterClass,
 		SpawnLocation,
@@ -384,6 +449,7 @@ void AActionCharacter::SummonGhost()
 	if (Ghost)
 	{
 		Ghost->InitGhost(Actions);
+		//コスト支払いとカウンタの更新
 		CurrentEnergy -= GhostSummonCost;
 		ActiveGhostCount++;
 	}

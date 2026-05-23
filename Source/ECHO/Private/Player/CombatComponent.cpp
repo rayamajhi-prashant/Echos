@@ -18,6 +18,7 @@ void UCombatComponent::ExecuteAttack()
 {
     if (bIsAttacking)
     {
+        //コンボ受付が開いていたら次の段数へ移行
         if (bComboWindowOpen)
         {
             int32 NextIndex = CurrentComboIndex + 1;
@@ -26,6 +27,7 @@ void UCombatComponent::ExecuteAttack()
         }
         else
         {
+            //受付窓口が開く前にボタンが押されたら先行入力をONにする
             bComboInputBuffered = true;
         }
         return;
@@ -43,12 +45,14 @@ void UCombatComponent::ExecuteComboStep(int32 StepIndex)
 
     const FComboStepData& Step = ComboSteps[StepIndex];
 
+    //ステートの更新
     CurrentComboIndex = StepIndex;
     bIsAttacking = true;
     bComboWindowOpen = false;
     bComboInputBuffered = false;
     HitActorsThisAttack.Empty();
 
+    //以前のコンボリセットタイマーをクリア、再セット
     GetWorld()->GetTimerManager().ClearTimer(ComboResetTimerHandle);
     GetWorld()->GetTimerManager().SetTimer(
         ComboResetTimerHandle,
@@ -58,11 +62,13 @@ void UCombatComponent::ExecuteComboStep(int32 StepIndex)
         false
     );
 
+    //残像システムへの行動データの通知
     FGhostActionData Data;
     Data.Type = EGhostActionType::Attack;
     Data.Timestamp = GetWorld()->GetTimeSeconds();
     Data.Location = OwnerCharacter->GetActorLocation();
     Data.Rotation = OwnerCharacter->GetActorRotation();
+    //アニメーターが識別しやすいよう「Attack1」「Attack2」といったタグ名を動的に生成
     Data.AnimationTag = FName(*FString::Printf(TEXT("Attack%d"), StepIndex + 1));
     OnGhostActionRecorded.Broadcast(Data);
 
@@ -74,6 +80,7 @@ void UCombatComponent::OpenComboWindow()
 {
     bComboWindowOpen = true;
 
+    //ボタン連打されたら次のコンボを即座に発動させる
     if (bComboInputBuffered)
     {
         bComboInputBuffered = false;
@@ -90,6 +97,7 @@ void UCombatComponent::CloseComboWindow()
 
 void UCombatComponent::OnComboResetTimeout()
 {
+    //猶予時間に入力がなければコンボステートを初期化
     CurrentComboIndex = 0;
     bIsAttacking = false;
     bComboWindowOpen = false;
@@ -107,16 +115,19 @@ void UCombatComponent::CheckHit()
 
     const FComboStepData& Step = ComboSteps[CurrentComboIndex];
 
+    //自身の位置からキャラクターの前方へリーチの分だけ伸ばした線分を作成
     FVector Start = OwnerCharacter->GetActorLocation();
     FVector End = Start + OwnerCharacter->GetActorForwardVector() * Step.HitRange;
 
     TArray<FHitResult> HitResults;
     FCollisionShape Sphere = FCollisionShape::MakeSphere(Step.HitRadius);
 
+    //デバッグ用
     DrawDebugSphere(GetWorld(), Start, Step.HitRadius, 12, FColor::Yellow, false, 1.f);
     DrawDebugSphere(GetWorld(), End, Step.HitRadius, 12, FColor::Red, false, 1.f);
     DrawDebugLine(GetWorld(), Start, End, FColor::Green, false, 1.f);
 
+    //当たり判定用の球体を移動させる
     bool bHit = GetWorld()->SweepMultiByChannel(
         HitResults, Start, End,
         FQuat::Identity, ECC_Pawn, Sphere);
@@ -126,28 +137,33 @@ void UCombatComponent::CheckHit()
     for (const FHitResult& Hit : HitResults)
     {
         AActor* HitActor = Hit.GetActor();
+
+        //自身を無視、他アクタに重複して当たらないようにする
         if (!HitActor || HitActor == OwnerCharacter) continue;
         if (HitActorsThisAttack.Contains(HitActor)) continue;
         HitActorsThisAttack.Add(HitActor);
 
+        //UE標準の汎用ダメージシステムを適応
         UGameplayStatics::ApplyDamage(
             HitActor, Step.Damage,
             OwnerCharacter->GetController(),
             OwnerCharacter,
             UDamageType::StaticClass());
 
+        //吹き飛ばし力が設定されている場合ノックバック処理
         if (Step.LaunchForce > 0.f)
         {
             if (ACharacter* HitCharacter = Cast<ACharacter>(HitActor))
             {
-                FVector LaunchDir = (HitActor->GetActorLocation()
-                    - OwnerCharacter->GetActorLocation()).GetSafeNormal();
-                LaunchDir.Z = 0.5f;
-                HitCharacter->LaunchCharacter(
-                    LaunchDir * Step.LaunchForce, true, true);
+                //自分から敵への方向ベクトルわ算出
+                FVector LaunchDir = (HitActor->GetActorLocation() - OwnerCharacter->GetActorLocation()).GetSafeNormal();
+                LaunchDir.Z = 0.2f; //少し斜め上に打ち上げる
+                //敵の移動速度をリセット
+                HitCharacter->LaunchCharacter(LaunchDir * Step.LaunchForce, true, true);
             }
         }
 
+        //ヒット対象が敵であった場合デリゲートを介してキャラクター側にエネルギーを送る
         if (Cast<AEnemyChara>(HitActor))
             OnHitEnemy.Broadcast(Step.Damage * 0.5f);
     }
@@ -164,10 +180,12 @@ void UCombatComponent::ExecuteDodge()
     UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement();
     if (!MoveComp) return;
 
+    //入力方向を回避方向とする。入力がない場合は正面方向
     FVector DodgeDirection = MoveComp->GetLastInputVector();
     if (DodgeDirection.IsNearlyZero())
         DodgeDirection = OwnerCharacter->GetActorForwardVector();
 
+    //残像システムへ回避アクションを通知
     FGhostActionData Data;
     Data.Type = EGhostActionType::Dodge;
     Data.Timestamp = GetWorld()->GetTimeSeconds();
@@ -176,35 +194,40 @@ void UCombatComponent::ExecuteDodge()
     Data.Direction = DodgeDirection.GetSafeNormal();
     OnGhostActionRecorded.Broadcast(Data);
 
+    //空中での回避制限チェック（一回まで）
     if (MoveComp->IsFalling())
     {
         if (bHasAirDodged) return;
         bHasAirDodged = true;
     }
 
+    //回避クールダウンタイマーの開始
     bCanDodge = false;
     OwnerCharacter->GetWorldTimerManager().SetTimer(
         DodgeCoolDownTimerHandle, this,
         &UCombatComponent::ResetDodgeCooldown,
         DodgeCooldown, false);
 
+    //完全に水平方向へ滑らせる
     DodgeDirection.Z = 0.f;
+    //元の重力と摩擦を0にする
     CachedGravityScale = MoveComp->GravityScale;
     CachedGroundFriction = MoveComp->GroundFriction;
     MoveComp->GravityScale = 0.f;
     MoveComp->GroundFriction = 0.f;
 
+    //回避持続タイマー開始
     OwnerCharacter->GetWorldTimerManager().SetTimer(
         DodgeTimerHandle, this,
         &UCombatComponent::EndDodge,
         DodgeDuration, false);
 
-    UActionMovementComponent* ActionMoveComp =
-        Cast<UActionMovementComponent>(MoveComp);
+    //移動コンポーネントに現在回避中のフラグを立て、他の移動処理を排除
+    UActionMovementComponent* ActionMoveComp = Cast<UActionMovementComponent>(MoveComp);
     if (ActionMoveComp) ActionMoveComp->bIsDodging = true;
 
-    OwnerCharacter->LaunchCharacter(
-        DodgeDirection.GetSafeNormal() * DodgeForce, true, true);
+    //キャラクターを強引に押し出す
+    OwnerCharacter->LaunchCharacter(DodgeDirection.GetSafeNormal() * DodgeForce, true, true);
 }
 
 void UCombatComponent::EndDodge()
@@ -219,9 +242,11 @@ void UCombatComponent::EndDodge()
         Cast<UActionMovementComponent>(MoveComp);
     if (ActionMoveComp) ActionMoveComp->bIsDodging = false;
 
+    //一時的に無効化していたしていた重力と摩擦を元の値に復元
     MoveComp->GravityScale = CachedGravityScale;
     MoveComp->GroundFriction = CachedGroundFriction;
 
+    //回避終了時にXY軸の速度を強制的に０にする、ピタッとキレのある操作感にする
     FVector Vel = MoveComp->Velocity;
     Vel.X = 0.f;
     Vel.Y = 0.f;

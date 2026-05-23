@@ -22,10 +22,10 @@ public:
     void SetMovementWeight(float NewAcceleration, float NewFriction);
 
     //ダッシュ状態への切り替え、最大歩行速度を切り替える関数
-    void SetSprinting(bool bIsSprinting);
+    void SetSprinting(bool _bIsSprinting);
 
     //現在ダッシュ中かどうか取得する関数
-    bool IsSprinting() const { return m_bIsSprinting; }
+    bool IsSprinting() const { return bIsSprinting; }
 
     //着地後の硬直処理を開始する関数
     void StartLandingRecovery(bool bWasSprinting);
@@ -42,7 +42,7 @@ protected:
     float SprintSpeed = 1150.f;
 
     //現在ダッシュ中かどうかのフラグ
-    bool m_bIsSprinting = false;
+    bool bIsSprinting = false;
 
 public:
     // --- アクション状態フラグ ---

@@ -47,8 +47,7 @@ void UActionMovementComponent::TickComponent(
                 if (HorizontalVelocity.Size() > AirMaxHorizontalSpeed)
                 {
                     //制限を超えている場合はクランプする
-                    HorizontalVelocity = HorizontalVelocity.GetSafeNormal()
-                        * AirMaxHorizontalSpeed;
+                    HorizontalVelocity = HorizontalVelocity.GetSafeNormal() * AirMaxHorizontalSpeed;
                     Velocity.X = HorizontalVelocity.X;
                     Velocity.Y = HorizontalVelocity.Y;
                 }
@@ -77,6 +76,7 @@ void UActionMovementComponent::TickComponent(
             CachedMaxWalkSpeed,
             EasedAlpha);
 
+        //回復時間が終了したら、速度を完全に戻す
         if (Alpha >= 1.f)
         {
             bIsLandingRecovery = false;
@@ -92,16 +92,19 @@ void UActionMovementComponent::SetMovementWeight(
     GroundFriction = NewFriction;
 }
 
-void UActionMovementComponent::SetSprinting(bool bIsSprinting)
+void UActionMovementComponent::SetSprinting(bool _bIsSprinting)
 {
-    MaxWalkSpeed = bIsSprinting ? SprintSpeed : BaseWalkSpeed;
-    m_bIsSprinting = bIsSprinting;
+    //ダッシュフラグに応じて最大速度を切り替え
+    MaxWalkSpeed = _bIsSprinting ? SprintSpeed : BaseWalkSpeed;
+    bIsSprinting = _bIsSprinting;
 }
 
 void UActionMovementComponent::StartLandingRecovery(bool bWasSprinting)
 {
+    //着地の状態を元に回復するべき目標速度を保存
     CachedMaxWalkSpeed = bWasSprinting ? SprintSpeed : BaseWalkSpeed;
     LandingRecoveryElapsed = 0.f;
     bIsLandingRecovery = true;
+    //着地瞬間の速度を制限
     MaxWalkSpeed = CachedMaxWalkSpeed * LandingSpeedMultiplier;
 }
